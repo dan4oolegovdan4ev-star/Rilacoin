@@ -1,60 +1,38 @@
-# Multistage docker build, requires docker 17.05
+# Използваме официален Ubuntu образ като база
+FROM ubuntu:22.04
 
-# builder stage
-FROM ubuntu:20.04 AS builder
+# Задаваме работната директория
+WORKDIR /app
 
-RUN set -ex && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends --yes install \
-        build-essential \
-        ca-certificates \
-        cmake \
-        curl \
-        git \
-        pkg-config
+# Инсталираме основните зависимости за Monero/Rilacoin
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    libboost-all-dev \
+    libssl-dev \
+    libzmq3-dev \
+    libunbound-dev \
+    libminiupnpc-dev \
+    libsodium-dev \
+    libhidapi-dev \
+    libreadline-dev \
+    wget \
+    curl \
+    ca-certificates \
+    python3 \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /src
-COPY . .
+# Копираме целия репо в контейнера
+COPY . /app
 
-ARG NPROC
-RUN set -ex && \
-    git submodule init && git submodule update && \
-    rm -rf build && \
-    if [ -z "$NPROC" ] ; \
-    then make -j$(nproc) depends target=x86_64-linux-gnu ; \
-    else make -j$NPROC depends target=x86_64-linux-gnu ; \
-    fi
+# Създаваме директория за билд
+RUN mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
 
-# runtime stage
-FROM ubuntu:20.04
-
-RUN set -ex && \
-    apt-get update && \
-    apt-get --no-install-recommends --yes install ca-certificates && \
-    apt-get clean && \
-    rm -rf /var/lib/apt
-COPY --from=builder /src/build/x86_64-linux-gnu/release/bin /usr/local/bin/
-
-# Create monero user
-RUN adduser --system --group --disabled-password monero && \
-	mkdir -p /wallet /home/monero/.bitmonero && \
-	chown -R monero:monero /home/monero/.bitmonero && \
-	chown -R monero:monero /wallet
-
-# Contains the blockchain
-VOLUME /home/monero/.bitmonero
-
-# Generate your wallet via accessing the container and run:
-# cd /wallet
-# monero-wallet-cli
-VOLUME /wallet
-
-EXPOSE 18080
+# Експоузваме стандартния RPC порт на Rilacoin daemon
 EXPOSE 18081
 
-# switch to user monero
-USER monero
-
-ENTRYPOINT ["monerod"]
-CMD ["--p2p-bind-ip=0.0.0.0", "--p2p-bind-port=18080", "--rpc-bind-ip=0.0.0.0", "--rpc-bind-port=18081", "--non-interactive", "--confirm-external-bind"]
-
+# Задаваме командата за стартиране на daemon-а
+CMD ["./build/src/daemon/rilacoin-daemon", "--non-interactive", "--detach"]
